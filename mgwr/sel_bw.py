@@ -10,7 +10,7 @@ import multiprocessing as mp
 from scipy.spatial.distance import pdist
 from scipy.optimize import minimize_scalar
 from spglm.family import Gaussian, Poisson, Binomial
-from .kernels import Kernel,local_cdist
+from .kernels import Kernel, local_cdist
 from .gwr import GWR
 from .search import golden_section, equal_interval, multi_bw
 from .diagnostics import get_AICc, get_AIC, get_BIC, get_CV
@@ -23,7 +23,8 @@ class Sel_BW(object):
     Select bandwidth for kernel
 
     Methods: p211 - p213, bandwidth selection
-    Fotheringham, A. S., Brunsdon, C., & Charlton, M. (2002).
+
+    :cite:`fotheringham_geographically_2002`: Fotheringham, A. S., Brunsdon, C., & Charlton, M. (2002).
     Geographically weighted regression: the analysis of spatially varying relationships.
 
     Parameters
@@ -36,15 +37,17 @@ class Sel_BW(object):
                      n*k2, local independent variable, including constant.
     coords         : list of tuples
                      (x,y) of points used in bandwidth selection
-    family         : string
-                     GWR model type: 'Gaussian', 'logistic, 'Poisson''
-    offset        : array
-                    n*1, the offset variable at the ith location. For Poisson model
-                    this term is often the size of the population at risk or
-                    the expected size of the outcome in spatial epidemiology
-                    Default is None where Ni becomes 1.0 for all locations
-    kernel         : string
-                     kernel function: 'gaussian', 'bisquare', 'exponetial'
+    family         : family object/instance, optional
+                     underlying probability model: Gaussian(), Poisson(),
+                     Binomial(). Default is Gaussian().
+    offset         : array
+                     n*1, the offset variable at the ith location. For Poisson model
+                     this term is often the size of the population at risk or
+                     the expected size of the outcome in spatial epidemiology
+                     Default is None where Ni becomes 1.0 for all locations
+    kernel         : string, optional
+                     kernel function: 'gaussian', 'bisquare', 'exponential'.
+                     Default is 'bisquare'.
     fixed          : boolean
                      True for fixed bandwidth and False for adaptive (NN)
     multi          : True for multiple (covaraite-specific) bandwidths
@@ -53,9 +56,11 @@ class Sel_BW(object):
     constant       : boolean
                      True to include intercept (default) in model and False to exclude
                      intercept.
-    spherical     : boolean
-                    True for shperical coordinates (long-lat),
-                    False for projected coordinates (defalut).
+    spherical      : boolean
+                     True for shperical coordinates (long-lat),
+                     False for projected coordinates (defalut).
+    n_jobs         : integer
+                     The number of jobs (default -1) to run in parallel. -1 means using all processors.
 
     Attributes
     ----------
@@ -93,36 +98,36 @@ class Sel_BW(object):
     constant       : boolean
                      True to include intercept (default) in model and False to exclude
                      intercept.
-    offset        : array
-                    n*1, the offset variable at the ith location. For Poisson model
-                    this term is often the size of the population at risk or
-                    the expected size of the outcome in spatial epidemiology
-                    Default is None where Ni becomes 1.0 for all locations
-    spherical     : boolean
-                    True for shperical coordinates (long-lat),
-                    False for projected coordinates (defalut).
-    search_params : dict
-                    stores search arguments
-    int_score     : boolan
-                    True if adaptive bandwidth is being used and bandwdith
-                    selection should be discrete. False
-                    if fixed bandwidth is being used and bandwidth does not have
-                    to be discrete.
-    bw            : scalar or array-like
-                    Derived optimal bandwidth(s). Will be a scalar for GWR
-                    (multi=False) and a list of scalars for MGWR (multi=True)
-                    with one bandwidth for each covariate.
-    S             : array
-                    n*n, hat matrix derived from the iterative backfitting
-                    algorthim for MGWR during bandwidth selection
-    R             : array
-                    n*n*k, partial hat matrices derived from the iterative
-                    backfitting algoruthm for MGWR during bandwidth selection.
-                    There is one n*n matrix for each of the k covariates.
-    params        : array
-                    n*k, calibrated parameter estimates for MGWR based on the
-                    iterative backfitting algorithm - computed and saved here to
-                    avoid having to do it again in the MGWR object.
+    offset         : array
+                     n*1, the offset variable at the ith location. For Poisson model
+                     this term is often the size of the population at risk or
+                     the expected size of the outcome in spatial epidemiology
+                     Default is None where Ni becomes 1.0 for all locations
+    spherical      : boolean
+                     True for shperical coordinates (long-lat),
+                     False for projected coordinates (defalut).
+    search_params  : dict
+                     stores search arguments
+    int_score      : boolan
+                     True if adaptive bandwidth is being used and bandwdith
+                     selection should be discrete. False
+                     if fixed bandwidth is being used and bandwidth does not have
+                     to be discrete.
+    bw             : scalar or array-like
+                     Derived optimal bandwidth(s). Will be a scalar for GWR
+                     (multi=False) and a list of scalars for MGWR (multi=True)
+                     with one bandwidth for each covariate.
+    S              : array
+                     n*n, hat matrix derived from the iterative backfitting
+                     algorthim for MGWR during bandwidth selection
+    R              : array
+                     n*n*k, partial hat matrices derived from the iterative
+                     backfitting algoruthm for MGWR during bandwidth selection.
+                     There is one n*n matrix for each of the k covariates.
+    params         : array
+                     n*k, calibrated parameter estimates for MGWR based on the
+                     iterative backfitting algorithm - computed and saved here to
+                     avoid having to do it again in the MGWR object.
 
     Examples
     --------
@@ -136,7 +141,7 @@ class Sel_BW(object):
     >>> pov = np.array(data.by_col('PctPov')).reshape((-1,1))
     >>> african_amer = np.array(data.by_col('PctBlack')).reshape((-1,1))
     >>> X = np.hstack([rural, pov, african_amer])
-    
+
     Golden section search AICc - adaptive bisquare
 
     >>> bw = Sel_BW(coords, y, X).search(criterion='AICc')
@@ -172,33 +177,27 @@ class Sel_BW(object):
 
     def __init__(self, coords, y, X_loc, X_glob=None, family=Gaussian(),
                  offset=None, kernel='bisquare', fixed=False, multi=False,
-                 constant=True, spherical=False):
+                 constant=True, spherical=False, n_jobs=-1):
         self.coords = np.array(coords)
         self.y = y
         self.X_loc = X_loc
-        if X_glob is not None:
-            self.X_glob = X_glob
-        else:
-            self.X_glob = []
+        self.X_glob = X_glob if X_glob is not None else []
         self.family = family
         self.fixed = fixed
         self.kernel = kernel
-        if offset is None:
-            self.offset = np.ones((len(y), 1))
-        else:
-            self.offset = offset * 1.0
+        self.offset = np.ones((len(y), 1)) if offset is None else offset * 1.0
         self.multi = multi
         self._functions = []
         self.constant = constant
         self.spherical = spherical
+        self.n_jobs = n_jobs
         self.search_params = {}
 
     def search(self, search_method='golden_section', criterion='AICc',
                bw_min=None, bw_max=None, interval=0.0, tol=1.0e-6,
                max_iter=200, init_multi=None, tol_multi=1.0e-5,
                rss_score=False, max_iter_multi=200, multi_bw_min=[None],
-               multi_bw_max=[None
-                             ], bws_same_times=5, pool=None, verbose=False):
+               multi_bw_max=[None], bws_same_times=5, pool=None, verbose=False):
         """
         Method to select one unique bandwidth for a gwr model or a
         bandwidth vector for a mgwr model.
@@ -213,7 +212,7 @@ class Sel_BW(object):
                          min value used in bandwidth search
         bw_max         : float
                          max value used in bandwidth search
-        multi_bw_min   : list 
+        multi_bw_min   : list
                          min values used for each covariate in mgwr bandwidth search.
                          Must be either a single value or have one value for
                          each covariate including the intercept
@@ -258,7 +257,7 @@ class Sel_BW(object):
                          designs matrix, X
         """
         k = self.X_loc.shape[1]
-        if self.constant:  #k is the number of covariates
+        if self.constant:  # k is the number of covariates
             k += 1
         self.search_method = search_method
         self.criterion = criterion
@@ -302,15 +301,15 @@ class Sel_BW(object):
         self.search_params['interval'] = interval
         self.search_params['tol'] = tol
         self.search_params['max_iter'] = max_iter
-        #self._check_min_max()
+        # self._check_min_max()
 
         self.int_score = not self.fixed
 
         if self.multi:
             self._mbw()
-            self.params = self.bw[3]  #params n by k
+            self.params = self.bw[3]  # params n by k
             self.sel_hist = self.bw[-2]
-            self.bw_init = self.bw[-1]  #scalar, optimal bw from initial gwr model
+            self.bw_init = self.bw[-1]  # scalar, optimal bw from initial gwr model
         else:
             self._bw()
             self.sel_hist = self.bw[-1]
@@ -319,17 +318,20 @@ class Sel_BW(object):
         return self.bw[0]
 
     def _bw(self):
-        gwr_func = lambda bw: getDiag[self.criterion](GWR(
-            self.coords, self.y, self.X_loc, bw, family=self.family, kernel=
-            self.kernel, fixed=self.fixed, constant=self.constant, offset=self.
-            offset, spherical=self.spherical).fit(lite=True, pool=self.pool))
+
+        def gwr_func(bw): return getDiag[self.criterion](GWR(
+            self.coords, self.y, self.X_loc, bw,
+            family=self.family, kernel=self.kernel,
+            fixed=self.fixed, constant=self.constant,
+            offset=self.offset, spherical=self.spherical,
+            n_jobs=self.n_jobs).fit(lite=True, pool=self.pool))
 
         self._optimized_function = gwr_func
 
         if self.search_method == 'golden_section':
             self.bw_min, self.bw_max = self._init_section(self.X_glob, self.X_loc, self.coords,
                                       self.constant)
-            delta = 0.38197  #1 - (np.sqrt(5.0)-1.0)/2.0
+            delta = 0.38197  # 1 - (np.sqrt(5.0)-1.0)/2.0
             self.bw = golden_section(self.bw_min, self.bw_max, delta, gwr_func, self.tol,
                                      self.max_iter, self.int_score,
                                      self.verbose)
@@ -353,7 +355,7 @@ class Sel_BW(object):
     def _mbw(self):
         y = self.y
         if self.constant:
-            X = USER.check_constant(self.X_loc)
+            X, keep_x, warn = USER.check_constant(self.X_loc)
         else:
             X = self.X_loc
         n, k = X.shape
@@ -398,18 +400,9 @@ class Sel_BW(object):
                            bws_same_times, verbose=self.verbose)
 
     def _init_section(self, X_glob, X_loc, coords, constant):
-        if len(X_glob) > 0:
-            n_glob = X_glob.shape[1]
-        else:
-            n_glob = 0
-        if len(X_loc) > 0:
-            n_loc = X_loc.shape[1]
-        else:
-            n_loc = 0
-        if constant:
-            n_vars = n_glob + n_loc + 1
-        else:
-            n_vars = n_glob + n_loc
+        n_glob = X_glob.shape[1] if len(X_glob) > 0 else 0
+        n_loc = X_loc.shape[1] if len(X_loc) > 0 else 0
+        n_vars = n_glob + n_loc + 1 if constant else n_glob + n_loc
         n = np.array(coords).shape[0]
 
         if self.int_score:
@@ -417,10 +410,10 @@ class Sel_BW(object):
             c = n
         else:
             min_dist = np.min(np.array([np.min(np.delete(
-                local_cdist(coords[i],coords,spherical=self.spherical),i))
+                local_cdist(coords[i], coords, spherical=self.spherical),i))
                 for i in range(n)]))
             max_dist = np.max(np.array([np.max(
-                local_cdist(coords[i],coords,spherical=self.spherical)) 
+                local_cdist(coords[i], coords, spherical=self.spherical))
                 for i in range(n)]))
             a = min_dist / 2.0
             c = max_dist * 2.0

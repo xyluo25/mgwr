@@ -92,8 +92,7 @@ def golden_section(a, c, delta, function, tol, max_iter, int_score=False,
     return np.round(opt_val, 2), opt_score, output
 
 
-def equal_interval(l_bound, u_bound, interval, function, int_score=False,
-                   verbose=False):
+def equal_interval(l_bound, u_bound, interval, function, int_score=False, verbose=False):
     """
     Interval search, using interval as stepsize
 
@@ -135,10 +134,10 @@ def equal_interval(l_bound, u_bound, interval, function, int_score=False,
         print("Bandwidth:", a, ", score:", "{0:.2f}".format(score_a))
 
     output.append((a, score_a))
-    
+
     opt_val = a
     opt_score = score_a
-        
+
     while b < c:
         score_b = function(b)
         if verbose:
@@ -153,7 +152,7 @@ def equal_interval(l_bound, u_bound, interval, function, int_score=False,
     score_c = function(c)
     if verbose:
         print("Bandwidth:", c, ", score:", "{0:.2f}".format(score_c))
-        
+
     output.append((c, score_c))
 
     if score_c < opt_score:
@@ -188,7 +187,7 @@ def multi_bw(init, y, X, n, k, family, tol, max_iter, rss_score, gwr_func,
     BWs = []
     bw_stable_counter = 0
     bws = np.empty(k)
-    
+
     gwr_sel_hist = []
 
     try:
@@ -201,13 +200,13 @@ def multi_bw(init, y, X, n, k, family, tol, max_iter, rss_score, gwr_func,
     for iters in tqdm(range(1, max_iter + 1), desc='Backfitting'):
         new_XB = np.zeros_like(X)
         params = np.zeros_like(X)
-        
+
         for j in range(k):
             temp_y = XB[:, j].reshape((-1, 1))
             temp_y = temp_y + err
             temp_X = X[:, j].reshape((-1, 1))
             bw_class = bw_func(temp_y, temp_X)
-            
+
             if bw_stable_counter >= bws_same_times:
                 #If in backfitting, all bws not changing in bws_same_times (default 5) iterations
                 bw = bws[j]
@@ -221,13 +220,13 @@ def multi_bw(init, y, X, n, k, family, tol, max_iter, rss_score, gwr_func,
             new_XB[:, j] = optim_model.predy.reshape(-1)
             params[:, j] = param
             bws[j] = bw
-        
+
         if (iters > 1) and np.all(BWs[-1] == bws):
             bw_stable_counter += 1
         else:
             bw_stable_counter = 0
-            
-            
+
+
         num = np.sum((new_XB - XB)**2) / n
         den = np.sum(np.sum(new_XB, axis=1)**2)
         score = (num / den)**0.5
