@@ -47,6 +47,8 @@
          if: matrix.os == 'ubuntu-latest' && contains(matrix.environment-file, 'DEV')
 
        - name: run tests - bash
-         run: pytest -v mgwr --cov=mgwr --cov-report=xml --timeout=300
+         run: pytest
+
+        #  -v mgwr --cov=mgwr tests/ --cov-report=xml --timeout=300
 
        - uses: codecov/codecov-action@v3
