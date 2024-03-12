@@ -1,11 +1,8 @@
-# Main GWR classes
+#Main GWR classes
 
 __author__ = "Taylor Oshan Tayoshan@gmail.com"
 
 import copy
-import os
-from typing import Optional
-import warnings
 import numpy as np
 import numpy.linalg as la
 from scipy.stats import t
@@ -15,10 +12,10 @@ from spglm.family import Gaussian, Binomial, Poisson
 from spglm.glm import GLM, GLMResults
 from spglm.iwls import iwls, _compute_betas_gwr
 from spglm.utils import cache_readonly
-from joblib import Parallel, delayed
 from .diagnostics import get_AIC, get_AICc, get_BIC, corr
 from .kernels import *
 from .summary import *
+import multiprocessing as mp
 
 
 class GWR(GLM):
@@ -85,13 +82,6 @@ class GWR(GLM):
                     True to store full n by n hat matrix,
                     False to not store full hat matrix to minimize memory footprint (defalut).
 
-    name_x        : list of strings
-                    Names of independent variables for use in output
-
-    n_jobs        : integer
-                    The number of jobs (default -1) to run in parallel. -1 means using all processors.
-
-
     Attributes
     ----------
     coords        : array-like
@@ -144,7 +134,7 @@ class GWR(GLM):
     spherical     : boolean
                     True for shperical coordinates (long-lat),
                     False for projected coordinates (defalut).
-
+                    
     hat_matrix    : boolean
                     True to store full n by n hat matrix,
                     False to not store full hat matrix to minimize memory footprint (defalut).
@@ -216,7 +206,7 @@ class GWR(GLM):
 
     def __init__(self, coords, y, X, bw, family=Gaussian(), offset=None,
                  sigma2_v1=True, kernel='bisquare', fixed=False, constant=True,
-                 spherical=False, hat_matrix=False, name_x=None,n_jobs=-1):
+                 spherical=False, hat_matrix=False):
         """
         Initialize class
         """
@@ -239,14 +229,9 @@ class GWR(GLM):
         self.P = None
         self.spherical = spherical
         self.hat_matrix = hat_matrix
-        self.name_x = name_x
-        self.n_jobs = n_jobs
+        self.m = np.unique(self.coords, axis=0).shape[0]
 
     def _build_wi(self, i, bw):
-
-        if bw == np.inf:
-            wi = np.ones((self.n))
-            return wi
 
         try:
             wi = Kernel(i, self.coords, bw, fixed=self.fixed,
@@ -292,7 +277,7 @@ class GWR(GLM):
             return influ, resid, predy, betas.reshape(-1), w, Si, tr_STS_i, CCT
 
     def fit(self, ini_params=None, tol=1.0e-5, max_iter=20, solve='iwls',
-            lite=False,pool=None):
+            lite=False, pool=None):
         """
         Method that fits a model with a particular estimation routine.
 
@@ -319,7 +304,7 @@ class GWR(GLM):
                         bandwidth selection (could speed up
                         bandwidth selection for GWR) or to estimate
                         a full GWR. Default is False.
-        pool          : None, deprecated and not used.
+        pool          : A multiprocessing Pool object to enable parallel fitting; default is None.
 
         Returns
         -------
@@ -335,9 +320,6 @@ class GWR(GLM):
         self.fit_params['solve'] = solve
         self.fit_params['lite'] = lite
 
-        if pool:
-            warnings.warn("The pool parameter is no longer used and will have no effect; parallelization is default and implemented using joblib instead.", RuntimeWarning, stacklevel=2)
-
         if solve.lower() == 'iwls':
 
             if self.points is None:
@@ -345,7 +327,11 @@ class GWR(GLM):
             else:
                 m = self.points.shape[0]
 
-            rslt = Parallel(n_jobs=self.n_jobs)(delayed(self._local_fit)(i) for i in range(m))
+            if pool:
+                rslt = pool.map(self._local_fit,
+                                range(m))  #parallel using mp.Pool
+            else:
+                rslt = map(self._local_fit, range(m))  #sequential
 
             rslt_list = list(zip(*rslt))
             influ = np.array(rslt_list[0]).reshape(-1, 1)
@@ -364,8 +350,7 @@ class GWR(GLM):
                 tr_STS = np.sum(np.array(rslt_list[-2]))
                 CCT = np.array(rslt_list[-1])
                 return GWRResults(self, params, predy, S, CCT, influ, tr_STS,
-                                  w, self.name_x)
-
+                                  w)
 
     def predict(self, points, P, exog_scale=None, exog_resid=None,
                 fit_params={}):
@@ -446,9 +431,6 @@ class GWRResults(GLMResults):
     w                   : array
                           n*1, final weight used for iteratively re-weighted least
                           sqaures; default is None
-
-    name_x        : list of strings
-                    Names of independent variables for use in output
 
     Attributes
     ----------
@@ -535,10 +517,10 @@ class GWRResults(GLMResults):
 
     R2                  : float
                           R-squared for the entire model (1- RSS/TSS)
-
+                          
     adj_R2              : float
                           adjusted R-squared for the entire model
-
+                          
     aic                 : float
                           Akaike information criterion
 
@@ -594,11 +576,11 @@ class GWRResults(GLMResults):
     pDev                : float
                           local percent of deviation accounted for; analogous to
                           r-squared for GLM's
-
+                          
     D2                  : float
                           percent deviance explained for GLM, equivaleng to R2 for
                           Gaussian.
-
+                          
     adj_D2              : float
                           adjusted percent deviance explained, equivaleng to adjusted
                           R2 for Gaussian.
@@ -615,13 +597,10 @@ class GWRResults(GLMResults):
                           p*1, predicted values generated by calling the GWR
                           predict method to predict dependent variable at
                           unsampled points ()
-
-    name_x        : list of strings
-                    Names of independent variables for use in output
     """
 
     def __init__(self, model, params, predy, S, CCT, influ, tr_STS=None,
-                 w=None, name_x=None):
+                 w=None):
         GLMResults.__init__(self, model, params, predy, w)
         self.offset = model.offset
         if w is not None:
@@ -632,13 +611,18 @@ class GWRResults(GLMResults):
         self.influ = influ
         self.CCT = self.cov_params(CCT, model.exog_scale)
         self._cache = {}
-        self.name_x=name_x
 
     @cache_readonly
     def W(self):
         W = np.array(
             [self.model._build_wi(i, self.model.bw) for i in range(self.n)])
         return W
+    
+    @cache_readonly  
+    def sumW(self):
+        W = np.array(
+            [np.sum(self.model._build_wi(i, self.model.bw)) for i in range(self.n)])
+        return np.array(W).reshape(-1,1)
 
     @cache_readonly
     def resid_ss(self):
@@ -687,7 +671,8 @@ class GWRResults(GLMResults):
         """
         effective number of parameters
 
-        Defaults to tr(s) as defined in :cite:`yu:2019`
+        Defualts to tr(s) as defined in yu et. al (2018) Inference in
+        Multiscale GWR
 
         but can alternatively be based on 2tr(s) - tr(STS)
 
@@ -783,16 +768,16 @@ class GWRResults(GLMResults):
 
         if sigma2_v1 is True: only use n-tr(S) in denominator
 
-        Methods: p214, (9.6) :cite:`fotheringham_geographically_2002`
+        Methods: p214, (9.6),
         Fotheringham, A. S., Brunsdon, C., & Charlton, M. (2002).
         Geographically weighted regression: the analysis of spatially varying
         relationships.
 
-        and as defined in :cite:`yu:2019`
+        and as defined  in Yu et. al. (2018) Inference in Multiscale GWR
 
         if sigma2_v1 is False (v1v2): use n-2(tr(S)+tr(S'S)) in denominator
 
-        Methods: p55 (2.16)-(2.18) :cite:`fotheringham_geographically_2002`
+        Methods: p55 (2.16)-(2.18)
         Fotheringham, A. S., Brunsdon, C., & Charlton, M. (2002).
         Geographically weighted regression: the analysis of spatially varying
         relationships.
@@ -809,7 +794,7 @@ class GWRResults(GLMResults):
         """
         standardized residuals
 
-        Methods:  p215, (9.7) :cite:`fotheringham_geographically_2002`
+        Methods:  p215, (9.7)
         Fotheringham, A. S., Brunsdon, C., & Charlton, M. (2002).
         Geographically weighted regression: the analysis of spatially varying
         relationships.
@@ -822,7 +807,7 @@ class GWRResults(GLMResults):
         """
         standard errors of Betas
 
-        Methods:  p215, (2.15) and (2.21) :cite:`fotheringham_geographically_2002`
+        Methods:  p215, (2.15) and (2.21)
         Fotheringham, A. S., Brunsdon, C., & Charlton, M. (2002).
         Geographically weighted regression: the analysis of spatially varying
         relationships.
@@ -834,7 +819,7 @@ class GWRResults(GLMResults):
         """
         Influence: leading diagonal of S Matrix
 
-        Methods: p216, (9.11) :cite:`fotheringham_geographically_2002`
+        Methods: p216, (9.11),
         Fotheringham, A. S., Brunsdon, C., & Charlton, M. (2002).
         Geographically weighted regression: the analysis of spatially varying
         relationships.
@@ -891,7 +876,7 @@ class GWRResults(GLMResults):
         testing. Includes corrected value for 90% (.1), 95% (.05), and 99%
         (.01) confidence levels. Correction comes from:
 
-        :cite:`Silva:2016` : da Silva, A. R., & Fotheringham, A. S. (2015). The Multiple Testing Issue in
+        da Silva, A. R., & Fotheringham, A. S. (2015). The Multiple Testing Issue in
         Geographically Weighted Regression. Geographical Analysis.
 
         """
@@ -902,7 +887,7 @@ class GWRResults(GLMResults):
 
     def critical_tval(self, alpha=None):
         """
-        Utility function to derive the critical t-value based on given alpha
+        Utility function to derive the critial t-value based on given alpha
         that are needed for hypothesis testing
 
         Parameters
@@ -941,7 +926,7 @@ class GWRResults(GLMResults):
 
         Parameters
         ----------
-        critical_t      : scalar
+        critical        : scalar
                           critical t-value to determine whether parameters are
                           statistically significant
 
@@ -1056,7 +1041,12 @@ class GWRResults(GLMResults):
     @cache_readonly
     def bic(self):
         return get_BIC(self)
-
+    
+    @cache_readonly
+    def DoD(self):
+        #Degree of Dependency
+        return (np.log(self.model.m*self.k) - np.log(self.ENP))/(np.log(self.model.m*self.k) - np.log(self.k))
+        
     @cache_readonly
     def pseudoR2(self):
         return None
@@ -1067,7 +1057,8 @@ class GWRResults(GLMResults):
 
     @cache_readonly
     def pvalues(self):
-        return None
+        n = self.n
+        return t.sf(np.abs(self.tvalues), n - 1) * 2
 
     @cache_readonly
     def conf_int(self):
@@ -1076,17 +1067,9 @@ class GWRResults(GLMResults):
     @cache_readonly
     def use_t(self):
         return None
-
-    def get_bws_intervals(self, selector, level=0.95):
-        """
-        Computes bandwidths confidence interval (CI) for GWR.
-        The CI is based on Akaike weights and the bandwidth search algorithm used.
-        Details are in Li et al. (2020) Annals of AAG
-
-        Returns a tuple with lower and upper bound of the bw CI.
-        e.g. (100, 300)
-        """
-
+    
+    #Li et al. (2020) Annals of AAG
+    def get_bws_intervals(self, selector, pval=0.95):
         try:
             import pandas as pd
         except ImportError:
@@ -1105,11 +1088,11 @@ class GWRResults(GLMResults):
         #Calculate cum. AICc weights
         aiccs['cum_w_ak'] = aiccs.w_aic_ak.cumsum()
         #Find index where the cum weights above p-val
-        index = len(aiccs[aiccs.cum_w_ak < level]) + 1
+        index = len(aiccs[aiccs.cum_w_ak < pval]) + 1
         #Get bw boundaries
         interval = (aiccs.iloc[:index,:].bw.min(),aiccs.iloc[:index,:].bw.max())
         return interval
-
+    
 
     def local_collinearity(self):
         """
@@ -1123,7 +1106,7 @@ class GWRResults(GLMResults):
 
         Returns four arrays with the order and dimensions listed above where n
         is the number of locations used as calibrations points and p is the
-        number of explanatory variables. Local correlation coefficient and local
+        nubmer of explanatory variables. Local correlation coefficient and local
         VIF are not calculated for constant term.
 
         """
@@ -1146,25 +1129,25 @@ class GWRResults(GLMResults):
         vdp_pi = np.ndarray((nrow, nvar, nvar))
 
         for i in range(nrow):
-            wi = self.model._build_wi(i, self.model.bw)
+            wi = self.model._build_wi(i,self.model.bw)
             sw = np.sum(wi)
             wi = wi / sw
             tag = 0
 
             for j, k in jk:
-                corr_mat[i, tag] = corr(np.cov(x[:, j], x[:, k],
-                                               aweights=wi))[0][1]
+                corr_mat[i, tag] = corr(
+                    np.cov(x[:, j], x[:, k], aweights=wi))[0][1]
                 tag = tag + 1
 
             if self.model.constant:
                 corr_mati = corr(np.cov(x[:, 1:].T, aweights=wi))
-                vifs_mat[i, ] = np.diag(
-                    np.linalg.solve(corr_mati, np.identity((nvar - 1))))
+                vifs_mat[i, ] = np.diag(np.linalg.solve(
+                    corr_mati, np.identity((nvar - 1))))
 
             else:
                 corr_mati = corr(np.cov(x.T, aweights=wi))
-                vifs_mat[i, ] = np.diag(
-                    np.linalg.solve(corr_mati, np.identity((nvar))))
+                vifs_mat[i, ] = np.diag(np.linalg.solve(
+                    corr_mati, np.identity((nvar))))
 
             xw = x * wi.reshape((nrow, 1))
             sxw = np.sqrt(np.sum(xw**2, axis=0))
@@ -1181,7 +1164,7 @@ class GWRResults(GLMResults):
 
         return corr_mat, vifs_mat, local_CN, VDP
 
-    def spatial_variability(self, selector, n_iters=1000, seed=None):
+    def spatial_variability(self, selector, n_iters=1000, seed=None, pool=None):
         """
         Method to compute a Monte Carlo test of spatial variability for each
         estimated coefficient surface.
@@ -1236,19 +1219,14 @@ class GWRResults(GLMResults):
         init_sd = np.std(self.params, axis=0)
         SDs = []
 
-        try:
-            from tqdm.auto import tqdm  # if they have it, let users have a progress bar
-        except ImportError:
-            def tqdm(x, desc=''):  # otherwise, just passthrough the range
-                return x
-
-        for x in tqdm(range(n_iters), desc='Testing'):
+        for x in range(n_iters):
+            print("MC iteration:",x,"/1000")
             temp_coords = np.random.permutation(self.model.coords)
             temp_sel.coords = temp_coords
-            temp_bw = temp_sel.search(**search_params)
+            temp_bw = temp_sel.search(**search_params, pool=pool)
             temp_gwr.bw = temp_bw
             temp_gwr.coords = temp_coords
-            temp_params = temp_gwr.fit(**fit_params).params
+            temp_params = temp_gwr.fit(**fit_params, pool=pool).params
             temp_sd = np.std(temp_params, axis=0)
             SDs.append(temp_sd)
 
@@ -1265,37 +1243,19 @@ class GWRResults(GLMResults):
             predictions = np.sum(P * self.params, axis=1).reshape((-1, 1))
         return predictions
 
-    def summary(self, as_str: bool = False) -> Optional[str]:
+    def summary(self):
         """
         Print out GWR summary
-
-        Parameters
-        ----------
-        as_str        : bool
-                        optional parameters to specify that summary results
-                        should be returned as str and not printed to stdout
-
-        Returns
-        -------
-
-        summary        : Optional[str]
-                        optional GWR summary string if `as_str` is True
         """
         summary = summaryModel(self) + summaryGLM(self) + summaryGWR(self)
-
-        if as_str:
-            return summary
-
         print(summary)
-        return None
+        return
 
 
 class GWRResultsLite(object):
     """
     Lightweight GWR that computes the minimum diagnostics needed for bandwidth
-    selection.
-
-    See FastGWR,Li et al., 2019, IJGIS.
+    selection
 
     Parameters
     ----------
@@ -1328,11 +1288,11 @@ class GWRResultsLite(object):
     """
 
     def __init__(self, model, resid, influ, params):
-        self.y = model.y
+        self.y = model.y.reshape(-1)
         self.family = model.family
         self.n = model.n
         self.influ = influ
-        self.resid_response = resid
+        self.resid_response = resid.reshape(-1)
         self.model = model
         self.params = params
 
@@ -1358,10 +1318,11 @@ class GWRResultsLite(object):
         return np.dot(u, u.T)
 
 
+
+
 class MGWR(GWR):
     """
     Multiscale GWR estimation and inference.
-    See :cite:`Fotheringham:2017` :cite:`yu:2019`.
 
     Parameters
     ----------
@@ -1409,15 +1370,12 @@ class MGWR(GWR):
                     intercept.
 
     spherical     : boolean
-                    True for spherical coordinates (long-lat),
+                    True for shperical coordinates (long-lat),
                     False for projected coordinates (defalut).
     hat_matrix    : boolean
                     True for computing and storing covariate-specific
                     hat matrices R (n,n,k) and model hat matrix S (n,n).
                     False (default) for computing MGWR inference on the fly.
-
-    name_x        : list of strings
-                    Names of independent variables for use in output
 
     Attributes
     ----------
@@ -1495,12 +1453,6 @@ class MGWR(GWR):
                     observations from each calibration point: one for each
                     covariate (k)
 
-    name_x        : list of strings
-                    Names of independent variables for use in output
-
-    n_jobs        : integer
-                    The number of jobs (default 1) to run in parallel. -1 means using all processors.
-
     Examples
     --------
 
@@ -1530,16 +1482,15 @@ class MGWR(GWR):
 
     def __init__(self, coords, y, X, selector, sigma2_v1=True,
                  kernel='bisquare', fixed=False, constant=True,
-                 spherical=False, hat_matrix=False, name_x=None,n_jobs=1):
+                 spherical=False, hat_matrix=False):
         """
         Initialize class
         """
         self.selector = selector
         self.bws = self.selector.bw[0]  #final set of bandwidth
         self.bws_history = selector.bw[1]  #bws history in backfitting
-        self.bw_init = self.selector.bw_init  #initialization bandiwdth
-        self.family = Gaussian(
-        )  # manually set since we only support Gassian MGWR for now
+        self.bw_init = self.selector.bw_init  #initialization bandwidth
+        self.family = Gaussian()  # manually set since we only support Gassian MGWR for now
         GWR.__init__(self, coords, y, X, self.bw_init, family=self.family,
                      sigma2_v1=sigma2_v1, kernel=kernel, fixed=fixed,
                      constant=constant, spherical=spherical,
@@ -1552,8 +1503,6 @@ class MGWR(GWR):
         self.exog_resid = None
         self.exog_scale = None
         self_fit_params = None
-        self.name_x = name_x
-        self.n_jobs = n_jobs
 
     def _chunk_compute_R(self, chunk_id=0):
         """
@@ -1609,20 +1558,18 @@ class MGWR(GWR):
             return ENP_j, CCT, pR
         return ENP_j, CCT
 
-    def fit(self, n_chunks=1,pool=None):
+    def fit(self, n_chunks=1, pool=None):
         """
         Compute MGWR inference by chunk to reduce memory footprint.
-        See Li and Fotheringham, 2020, IJGIS.
-
+        
         Parameters
         ----------
 
         n_chunks      : integer, optional
-                        A number of chunks parameter to reduce memory usage.
+                        A number of chunks parameter to reduce memory usage. 
                         e.g. n_chunks=2 should reduce overall memory usage by 2.
-
-        pool          : None, deprecated and not used
-
+        pool          : A multiprocessing Pool object to enable parallel fitting; default is None.
+                        
         Returns
         -------
                       : MGWRResults
@@ -1639,18 +1586,14 @@ class MGWR(GWR):
                 return x
 
         if pool:
-            warnings.warn("The pool parameter is no longer used and will have no effect; parallelization is default and implemented using joblib instead.", RuntimeWarning, stacklevel=2)
-
-        if self.n_jobs == -1:
-            max_processors = os.cpu_count()
-            self.n_chunks = max_processors * n_chunks
-        else:
-            self.n_chunks = self.n_jobs * n_chunks
-
-        # Using joblib for parallel processing with a tqdm progress bar
-        rslt = tqdm(Parallel(n_jobs=self.n_jobs)(
-                    delayed(self._chunk_compute_R)(i) for i in range(self.n_chunks)),
+            self.n_chunks = pool._processes * n_chunks
+            rslt = tqdm(
+                pool.imap(self._chunk_compute_R, range(self.n_chunks)),
                 total=self.n_chunks, desc='Inference')
+        else:
+            self.n_chunks = n_chunks
+            rslt = map(self._chunk_compute_R,
+                       tqdm(range(self.n_chunks), desc='Inference'))
 
         rslt_list = list(zip(*rslt))
         ENP_j = np.sum(np.array(rslt_list[0]), axis=0)
@@ -1661,55 +1604,7 @@ class MGWR(GWR):
             R = np.hstack(rslt_list[2])
         else:
             R = None
-        return MGWRResults(self, params, predy, CCT, ENP_j, w, R, self.name_x)
-
-
-    def exact_fit(self):
-        """
-        A closed-form solution to MGWR estimates and inference,
-        the backfitting in self.fit() will converge to this solution.
-
-        Note: this would require large memory when n > 5,000.
-        See Li and Fotheringham, 2020, IJGIS, pg.4.
-
-        Returns
-        -------
-                      : MGWRResults
-        """
-
-        P = []
-        Q = []
-        I = np.eye(self.n)
-        for j1 in range(self.k):
-            Aj = GWR(self.coords,self.y,self.X[:,j1].reshape(-1,1),bw=self.bws[j1],hat_matrix=True,constant=False,n_jobs=self.n_jobs).fit().S
-            Pj = []
-            for j2 in range(self.k):
-                if j1 == j2:
-                    Pj.append(I)
-                else:
-                    Pj.append(Aj)
-            P.append(Pj)
-            Q.append([Aj])
-
-        P = np.block(P)
-        Q = np.block(Q)
-        R = np.linalg.solve(P, Q)
-        f = R.dot(self.y)
-
-        params =  f/self.X.T.reshape(-1,1)
-        params = params.reshape(-1,self.n).T
-
-        R = np.stack(np.split(R,self.k),axis=2)
-        ENP_j = np.trace(R, axis1=0, axis2=1)
-        predy = np.sum(self.X * params, axis=1).reshape(-1, 1)
-        w = np.ones(self.n)
-
-        CCT = np.zeros((self.n,self.k))
-        for j in range(self.k):
-            CCT[:, j] = ((R[:, :, j] / self.X[:, j].reshape(-1, 1))**2).sum(axis=1)
-
         return MGWRResults(self, params, predy, CCT, ENP_j, w, R)
-
 
     def predict(self):
         '''
@@ -1745,9 +1640,6 @@ class MGWRResults(GWRResults):
     w                   : array
                           n*1, final weight used for iteratively re-weighted least
                           sqaures; default is None
-
-    name_x              : list of strings
-                           Names of independent variables for use in output
 
     Attributes
     ----------
@@ -1841,7 +1733,7 @@ class MGWRResults(GWRResults):
 
     R2                  : float
                           R-squared for the entire model (1- RSS/TSS)
-
+                          
     adj_R2              : float
                           adjusted R-squared for the entire model
 
@@ -1886,7 +1778,7 @@ class MGWRResults(GWRResults):
 
     """
 
-    def __init__(self, model, params, predy, CCT, ENP_j, w, R, name_x=None):
+    def __init__(self, model, params, predy, CCT, ENP_j, w, R):
         """
         Initialize class
         """
@@ -1896,21 +1788,27 @@ class MGWRResults(GWRResults):
         if model.hat_matrix:
             self.S = np.sum(self.R, axis=2)
         self.predy = predy
-        self.name_x = name_x
 
     @cache_readonly
     def tr_S(self):
         return np.sum(self.ENP_j)
-
+    
     @cache_readonly
     def W(self):
         Ws = []
         for bw_j in self.model.bws:
-            W = np.array(
-                [self.model._build_wi(i, bw_j) for i in range(self.n)])
+            W = np.array([self.model._build_wi(i, bw_j) for i in range(self.n)])
             Ws.append(W)
         return Ws
-
+        
+    @cache_readonly    
+    def sumW(self):
+        sumW = []
+        for bw_j in self.model.bws:
+            sum_Wj = np.array([np.sum(self.model._build_wi(i, bw_j)) for i in range(self.n)])
+            sumW.append(sum_Wj)
+        return np.array(sumW).T
+    
     @cache_readonly
     def adj_alpha_j(self):
         """
@@ -1918,7 +1816,7 @@ class MGWRResults(GWRResults):
         testing. Includes corrected value for 90% (.1), 95% (.05), and 99%
         (.01) confidence levels. Correction comes from:
 
-        :cite:`Silva:2016` : da Silva, A. R., & Fotheringham, A. S. (2015). The Multiple Testing Issue in
+        da Silva, A. R., & Fotheringham, A. S. (2015). The Multiple Testing Issue in
         Geographically Weighted Regression. Geographical Analysis.
 
         """
@@ -2006,37 +1904,46 @@ class MGWRResults(GWRResults):
     def TSS(self):
         raise NotImplementedError(
             'Not yet implemented for multiple bandwidths')
-
+    
     @cache_readonly
     def localR2(self):
-        raise NotImplementedError(
-            'Not yet implemented for multiple bandwidths')
+        if isinstance(self.family, Gaussian):
+            localR2 = np.zeros(shape=(self.n, 1))
+            for i in range(self.n):
+                wi = self.model._build_wi(i, self.model.bw_init).reshape(-1, 1)
+                y_bar = np.sum(self.y.reshape(-1, 1) * wi)/ np.sum(wi)
+                TSS = np.sum(wi * (self.y.reshape(-1, 1) - y_bar)**2)
+                RSS = np.sum(wi * self.resid_response.reshape(-1, 1)**2)
+                localR2[i] = 1 - RSS/TSS
+          
+            return localR2
+        
+        else:
+            raise NotImplementedError('Only applicable to Gaussian')
 
+                
     @cache_readonly
     def y_bar(self):
         raise NotImplementedError(
             'Not yet implemented for multiple bandwidths')
+    
+    @cache_readonly
+    def DoD_j(self):
+        return [(np.log(self.model.m) - np.log(enp_j))/(np.log(self.model.m) - np.log(1)) for enp_j in self.ENP_j]
 
     @cache_readonly
     def predictions(self):
         raise NotImplementedError('Not yet implemented for MGWR')
 
-    #Function for getting BWs intervals
-    def get_bws_intervals(self, selector, level=0.95):
-        """
-        Computes bandwidths confidence intervals (CIs) for MGWR.
-        The CIs are based on Akaike weights and the bandwidth search algorithm used.
-        Details are in Li et al. (2020) Annals of AAG
-
-        Returns a list of confidence intervals. e.g. [(40, 60), (100, 180), (150, 300)]
-
-        """
+    #Function for getting BW intervals
+    #Li et al. (2020) Annals of AAG
+    def get_bws_intervals(self, selector, pval=0.95):
         intervals = []
         try:
             import pandas as pd
         except ImportError:
             return
-
+    
         for j in range(self.k):
             #Get AICcs and associated bw from the last iteration of back-fitting and make a DataFrame
             aiccs = pd.DataFrame(list(zip(*selector.sel_hist[-self.k+j]))[1],columns=["aicc"])
@@ -2051,7 +1958,7 @@ class MGWRResults(GWRResults):
             #Calculate cum. AICc weights
             aiccs['cum_w_ak'] = aiccs.w_aic_ak.cumsum()
             #Find index where the cum weights above p-val
-            index = len(aiccs[aiccs.cum_w_ak < level]) + 1
+            index = len(aiccs[aiccs.cum_w_ak < pval]) + 1
             #Get bw boundaries
             interval = (aiccs.iloc[:index,:].bw.min(),aiccs.iloc[:index,:].bw.max())
             intervals += [interval]
@@ -2101,7 +2008,7 @@ class MGWRResults(GWRResults):
 
         return local_CN, VDP
 
-    def spatial_variability(self, selector, n_iters=1000, seed=None):
+    def spatial_variability(self, selector, n_iters=1000, seed=None, pool=None):
         """
         Method to compute a Monte Carlo test of spatial variability for each
         estimated coefficient surface.
@@ -2152,17 +2059,11 @@ class MGWRResults(GWRResults):
         init_sd = np.std(self.params, axis=0)
         SDs = []
 
-        try:
-            from tqdm.auto import tqdm  # if they have it, let users have a progress bar
-        except ImportError:
-
-            def tqdm(x, desc=''):  # otherwise, just passthrough the range
-                return x
-
-        for x in tqdm(range(n_iters), desc='Testing'):
+        for x in range(n_iters):
+            print("MC iteration:",x,"/1000")
             temp_coords = np.random.permutation(self.model.coords)
             temp_sel.coords = temp_coords
-            temp_sel.search(**search_params)
+            temp_sel.search(**search_params, pool=pool)
             temp_params = temp_sel.params
             temp_sd = np.std(temp_params, axis=0)
             SDs.append(temp_sd)
@@ -2170,26 +2071,10 @@ class MGWRResults(GWRResults):
         p_vals = (np.sum(np.array(SDs) > init_sd, axis=0) / float(n_iters))
         return p_vals
 
-    def summary(self, as_str: bool=False) -> Optional[str]:
+    def summary(self):
         """
         Print out MGWR summary
-
-        Parameters
-        ----------
-        as_str        : bool
-                        optional parameters to specify that summary results
-                        should be returned as str and not printed to stdout
-
-        Returns
-        -------
-
-        summary        : Optional[str]
-                        optional MGWR summary string if `as_str` is True
         """
         summary = summaryModel(self) + summaryGLM(self) + summaryMGWR(self)
-
-        if as_str:
-            return summary
-
         print(summary)
         return

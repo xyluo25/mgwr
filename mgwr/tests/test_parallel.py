@@ -6,6 +6,7 @@ import os
 import libpysal as ps
 from libpysal import io
 import numpy as np
+import multiprocessing as mp
 import unittest
 import pandas
 from types import SimpleNamespace
@@ -15,7 +16,7 @@ from ..diagnostics import get_AICc, get_AIC, get_BIC, get_CV
 from spglm.family import Gaussian, Poisson, Binomial
 
 
-class TestGWRGaussianParallel(unittest.TestCase):
+class TestGWRGaussianPool(unittest.TestCase):
     def setUp(self):
         data_path = ps.examples.get_path("GData_utm.csv")
         data = io.open(data_path)
@@ -36,8 +37,9 @@ class TestGWRGaussianParallel(unittest.TestCase):
         MGWR_path = os.path.join(
             os.path.dirname(__file__), 'georgia_mgwr_results.csv')
         self.MGWR = pandas.read_csv(MGWR_path)
+        self.pool = mp.Pool(4)
 
-    def test_BS_NN_Parallel(self):
+    def test_BS_NN_Pool(self):
         est_Int = self.BS_NN.by_col(' est_Intercept')
         se_Int = self.BS_NN.by_col(' se_Intercept')
         t_Int = self.BS_NN.by_col(' t_Intercept')
@@ -67,9 +69,9 @@ class TestGWRGaussianParallel(unittest.TestCase):
         spat_var_p_vals = [0., 0.0, 0.5, 0.2]
 
         model = GWR(self.coords, self.y, self.X, bw=90.000, fixed=False,
-                    sigma2_v1=False,n_jobs=-1)
+                    sigma2_v1=False)
 
-        rslt = model.fit()
+        rslt = model.fit(pool=self.pool)
 
         adj_alpha = rslt.adj_alpha
         alpha = 0.01017489
@@ -115,14 +117,14 @@ class TestGWRGaussianParallel(unittest.TestCase):
         np.testing.assert_allclose(cooksD, rslt.cooksD, rtol=1e-00)
 
         sel = Sel_BW(self.coords, self.y, self.X)
-        bw = sel.search()
-        model = GWR(self.coords, self.y, self.X, bw,n_jobs=-1)
-        result = model.fit()
+        bw = sel.search(pool=self.pool)
+        model = GWR(self.coords, self.y, self.X, bw)
+        result = model.fit(pool=self.pool)
 
         p_vals = result.spatial_variability(sel, 10)
         np.testing.assert_allclose(spat_var_p_vals, p_vals, rtol=1e-04)
 
-    def test_GS_F_Parallel(self):
+    def test_GS_F_Pool(self):
         est_Int = self.GS_F.by_col(' est_Intercept')
         se_Int = self.GS_F.by_col(' se_Intercept')
         t_Int = self.GS_F.by_col(' t_Intercept')
@@ -143,9 +145,9 @@ class TestGWRGaussianParallel(unittest.TestCase):
         cooksD = np.array(self.GS_F.by_col(' CooksD')).reshape((-1, 1))
 
         model = GWR(self.coords, self.y, self.X, bw=87308.298,
-                    kernel='gaussian', fixed=True, sigma2_v1=False,n_jobs=-1)
+                    kernel='gaussian', fixed=True, sigma2_v1=False)
 
-        rslt = model.fit()
+        rslt = model.fit(pool=self.pool)
 
         AICc = get_AICc(rslt)
         AIC = get_AIC(rslt)
@@ -175,25 +177,26 @@ class TestGWRGaussianParallel(unittest.TestCase):
         np.testing.assert_allclose(inf, rslt.influ, rtol=1e-04)
         np.testing.assert_allclose(cooksD, rslt.cooksD, rtol=1e-00)
 
-    def test_MGWR_Parallel(self):
+    def test_MGWR_Pool(self):
         std_y = (self.y - self.y.mean()) / self.y.std()
         std_X = (self.mgwr_X - self.mgwr_X.mean(axis=0)) / \
             self.mgwr_X.std(axis=0)
 
-        selector = Sel_BW(self.coords, std_y, std_X, multi=True, constant=True,n_jobs=-1)
-        selector.search(multi_bw_min=[2], multi_bw_max=[159])
+        selector = Sel_BW(self.coords, std_y, std_X, multi=True, constant=True)
+        selector.search(multi_bw_min=[2], multi_bw_max=[159], pool=self.pool)
         model = MGWR(self.coords, std_y, std_X, selector=selector,
-                     constant=True,n_jobs=-1)
+                     constant=True)
 
-        rslt = model.fit()
-        rslt_2 = model.fit(n_chunks=2)  #testing for n_chunks > 1
-        rslt_3 = model.fit(n_chunks=3)
-        rslt_20 = model.fit(n_chunks=20)
+        rslt = model.fit(pool=self.pool)
+        rslt_2 = model.fit(n_chunks=2,
+                           pool=self.pool)  #testing for n_chunks > 1
+        rslt_3 = model.fit(n_chunks=3, pool=self.pool)
+        rslt_20 = model.fit(n_chunks=20, pool=self.pool)
 
         model_hat = MGWR(self.coords, std_y, std_X, selector=selector,
-                         constant=True, hat_matrix=True,n_jobs=-1)
-        rslt_hat = model_hat.fit()
-        rslt_hat_2 = model_hat.fit(n_chunks=2)
+                         constant=True, hat_matrix=True)
+        rslt_hat = model_hat.fit(pool=self.pool)
+        rslt_hat_2 = model_hat.fit(n_chunks=2, pool=self.pool)
 
         np.testing.assert_allclose(rslt_hat.R, rslt_hat_2.R, atol=1e-07)
         np.testing.assert_allclose(
@@ -272,7 +275,7 @@ class TestGWRGaussianParallel(unittest.TestCase):
         coords_test = coords[test]
 
         model = GWR(self.coords, self.y, self.X, 93, family=Gaussian(),
-                    fixed=False, kernel='bisquare', sigma2_v1=False,n_jobs=-1)
+                    fixed=False, kernel='bisquare', sigma2_v1=False)
         results = model.predict(coords_test, X_test)
 
         params = np.array([
@@ -321,7 +324,7 @@ class TestGWRGaussianParallel(unittest.TestCase):
         np.testing.assert_allclose(predictions, results.predictions,
                                    rtol=1e-05)
 
-    def test_BS_NN_longlat_Parallel(self):
+    def test_BS_NN_longlat_Pool(self):
         GA_longlat = os.path.join(
             os.path.dirname(__file__), 'ga_bs_nn_longlat_listwise.csv')
         self.BS_NN_longlat = io.open(GA_longlat)
@@ -354,9 +357,9 @@ class TestGWRGaussianParallel(unittest.TestCase):
                                                                          1))
 
         model = GWR(coords_longlat, self.y, self.X, bw=90.000, fixed=False,
-                    spherical=True, sigma2_v1=False,n_jobs=-1)
+                    spherical=True, sigma2_v1=False)
 
-        rslt = model.fit()
+        rslt = model.fit(pool=self.pool)
 
         AICc = get_AICc(rslt)
         AIC = get_AIC(rslt)
@@ -389,11 +392,11 @@ class TestGWRGaussianParallel(unittest.TestCase):
         np.testing.assert_allclose(cooksD, rslt.cooksD, rtol=1e-00)
 
 
-class TestGWRPoissonParallel(unittest.TestCase):
+class TestGWRPoissonPool(unittest.TestCase):
     def setUp(self):
         data_path = os.path.join(
             os.path.dirname(__file__), 'tokyo/Tokyomortality.csv')
-        data = io.open(data_path, mode='r')
+        data = io.open(data_path, mode='Ur')
         self.coords = list(
             zip(data.by_col('X_CENTROID'), data.by_col('Y_CENTROID')))
         self.y = np.array(data.by_col('db2564')).reshape((-1, 1))
@@ -419,8 +422,9 @@ class TestGWRPoissonParallel(unittest.TestCase):
             os.path.join(
                 os.path.dirname(__file__),
                 'tokyo/tokyo_BS_NN_OFF_listwise.csv'))
+        self.pool = mp.Pool(4)
 
-    def test_BS_F_Parallel(self):
+    def test_BS_F_Pool(self):
         est_Int = self.BS_F.by_col(' est_Intercept')
         se_Int = self.BS_F.by_col(' se_Intercept')
         t_Int = self.BS_F.by_col(' t_Intercept')
@@ -441,9 +445,9 @@ class TestGWRPoissonParallel(unittest.TestCase):
 
         model = GWR(self.coords, self.y, self.X, bw=26029.625,
                     family=Poisson(), kernel='bisquare', fixed=True,
-                    sigma2_v1=False,n_jobs=-1)
+                    sigma2_v1=False)
 
-        rslt = model.fit()
+        rslt = model.fit(pool=self.pool)
 
         AICc = get_AICc(rslt)
         AIC = get_AIC(rslt)
@@ -471,7 +475,7 @@ class TestGWRPoissonParallel(unittest.TestCase):
         np.testing.assert_allclose(yhat, rslt.mu, rtol=1e-05)
         np.testing.assert_allclose(pdev, rslt.pDev, rtol=1e-05)
 
-    def test_BS_NN(self):
+    def test_BS_NN_Pool(self):
         est_Int = self.BS_NN.by_col(' est_Intercept')
         se_Int = self.BS_NN.by_col(' se_Intercept')
         t_Int = self.BS_NN.by_col(' t_Intercept')
@@ -491,9 +495,9 @@ class TestGWRPoissonParallel(unittest.TestCase):
         pdev = np.array(self.BS_NN.by_col(' localpdev')).reshape((-1, 1))
 
         model = GWR(self.coords, self.y, self.X, bw=50, family=Poisson(),
-                    kernel='bisquare', fixed=False, sigma2_v1=False,n_jobs=-1)
+                    kernel='bisquare', fixed=False, sigma2_v1=False)
 
-        rslt = model.fit()
+        rslt = model.fit(pool=self.pool)
 
         AICc = get_AICc(rslt)
         AIC = get_AIC(rslt)
@@ -523,7 +527,7 @@ class TestGWRPoissonParallel(unittest.TestCase):
         np.testing.assert_allclose(yhat, rslt.mu, rtol=1e-04)
         np.testing.assert_allclose(pdev, rslt.pDev, rtol=1e-05)
 
-    def test_BS_NN_Offset_Parallel(self):
+    def test_BS_NN_Offset_Pool(self):
         est_Int = self.BS_NN_OFF.by_col(' est_Intercept')
         se_Int = self.BS_NN_OFF.by_col(' se_Intercept')
         t_Int = self.BS_NN_OFF.by_col(' t_Intercept')
@@ -544,9 +548,9 @@ class TestGWRPoissonParallel(unittest.TestCase):
 
         model = GWR(self.coords, self.y, self.X, bw=100, offset=self.off,
                     family=Poisson(), kernel='bisquare', fixed=False,
-                    sigma2_v1=False,n_jobs=-1)
+                    sigma2_v1=False)
 
-        rslt = model.fit()
+        rslt = model.fit(pool=self.pool)
 
         AICc = get_AICc(rslt)
         AIC = get_AIC(rslt)
@@ -591,7 +595,7 @@ class TestGWRPoissonParallel(unittest.TestCase):
         np.testing.assert_allclose(yhat, rslt.mu, rtol=1e-03, atol=1e-02)
         np.testing.assert_allclose(pdev, rslt.pDev, rtol=1e-04, atol=1e-02)
 
-    def test_GS_F_Parallel(self):
+    def test_GS_F_Pool(self):
         est_Int = self.GS_F.by_col(' est_Intercept')
         se_Int = self.GS_F.by_col(' se_Intercept')
         t_Int = self.GS_F.by_col(' t_Intercept')
@@ -611,9 +615,9 @@ class TestGWRPoissonParallel(unittest.TestCase):
         pdev = np.array(self.GS_F.by_col(' localpdev')).reshape((-1, 1))
 
         model = GWR(self.coords, self.y, self.X, bw=8764.474, family=Poisson(),
-                    kernel='gaussian', fixed=True, sigma2_v1=False,n_jobs=-1)
+                    kernel='gaussian', fixed=True, sigma2_v1=False)
 
-        rslt = model.fit()
+        rslt = model.fit(pool=self.pool)
 
         AICc = get_AICc(rslt)
         AIC = get_AIC(rslt)
@@ -640,7 +644,7 @@ class TestGWRPoissonParallel(unittest.TestCase):
         np.testing.assert_allclose(yhat, rslt.mu, rtol=1e-04)
         np.testing.assert_allclose(pdev, rslt.pDev, rtol=1e-05)
 
-    def test_GS_NN_Parallel(self):
+    def test_GS_NN_Pool(self):
         est_Int = self.GS_NN.by_col(' est_Intercept')
         se_Int = self.GS_NN.by_col(' se_Intercept')
         t_Int = self.GS_NN.by_col(' t_Intercept')
@@ -660,9 +664,9 @@ class TestGWRPoissonParallel(unittest.TestCase):
         pdev = np.array(self.GS_NN.by_col(' localpdev')).reshape((-1, 1))
 
         model = GWR(self.coords, self.y, self.X, bw=50, family=Poisson(),
-                    kernel='gaussian', fixed=False, sigma2_v1=False,n_jobs=-1)
+                    kernel='gaussian', fixed=False, sigma2_v1=False)
 
-        rslt = model.fit()
+        rslt = model.fit(pool=self.pool)
 
         AICc = get_AICc(rslt)
         AIC = get_AIC(rslt)
@@ -690,7 +694,7 @@ class TestGWRPoissonParallel(unittest.TestCase):
         np.testing.assert_allclose(pdev, rslt.pDev, rtol=1e-05)
 
 
-class TestGWRBinomialParallel(unittest.TestCase):
+class TestGWRBinomialPool(unittest.TestCase):
     def setUp(self):
         data_path = os.path.join(
             os.path.dirname(__file__), 'clearwater/landslides.csv')
@@ -720,8 +724,9 @@ class TestGWRBinomialParallel(unittest.TestCase):
             os.path.join(
                 os.path.dirname(__file__),
                 'clearwater/clearwater_GS_NN_listwise.csv'))
+        self.pool = mp.Pool(4)
 
-    def test_BS_F_Parallel(self):
+    def test_BS_F_Pool(self):
         est_Int = self.BS_F.by_col(' est_Intercept')
         se_Int = self.BS_F.by_col(' se_Intercept')
         t_Int = self.BS_F.by_col(' t_Intercept')
@@ -748,9 +753,9 @@ class TestGWRBinomialParallel(unittest.TestCase):
 
         model = GWR(self.coords, self.y, self.X, bw=19642.170,
                     family=Binomial(), kernel='bisquare', fixed=True,
-                    sigma2_v1=False,n_jobs=-1)
+                    sigma2_v1=False)
 
-        rslt = model.fit()
+        rslt = model.fit(pool=self.pool)
 
         AICc = get_AICc(rslt)
         AIC = get_AIC(rslt)
@@ -786,7 +791,7 @@ class TestGWRBinomialParallel(unittest.TestCase):
         # code from Jing's python version, which both yield the same
         #np.testing.assert_allclose(pdev, rslt.pDev, rtol=1e-05)
 
-    def test_BS_NN_Parallel(self):
+    def test_BS_NN_Pool(self):
         est_Int = self.BS_NN.by_col(' est_Intercept')
         se_Int = self.BS_NN.by_col(' se_Intercept')
         t_Int = self.BS_NN.by_col(' t_Intercept')
@@ -812,9 +817,9 @@ class TestGWRBinomialParallel(unittest.TestCase):
         pdev = self.BS_NN.by_col(' localpdev')
 
         model = GWR(self.coords, self.y, self.X, bw=158, family=Binomial(),
-                    kernel='bisquare', fixed=False, sigma2_v1=False,n_jobs=-1)
+                    kernel='bisquare', fixed=False, sigma2_v1=False)
 
-        rslt = model.fit()
+        rslt = model.fit(pool=self.pool)
 
         AICc = get_AICc(rslt)
         AIC = get_AIC(rslt)
@@ -853,7 +858,7 @@ class TestGWRBinomialParallel(unittest.TestCase):
         # code from Jing's python version, which both yield the same
         #np.testing.assert_allclose(pdev, rslt.pDev, rtol=1e-05)
 
-    def test_GS_F_Parallel(self):
+    def test_GS_F_Pool(self):
         est_Int = self.GS_F.by_col(' est_Intercept')
         se_Int = self.GS_F.by_col(' se_Intercept')
         t_Int = self.GS_F.by_col(' t_Intercept')
@@ -880,9 +885,9 @@ class TestGWRBinomialParallel(unittest.TestCase):
 
         model = GWR(self.coords, self.y, self.X, bw=8929.061,
                     family=Binomial(), kernel='gaussian', fixed=True,
-                    sigma2_v1=False,n_jobs=-1)
+                    sigma2_v1=False)
 
-        rslt = model.fit()
+        rslt = model.fit(pool=self.pool)
 
         AICc = get_AICc(rslt)
         AIC = get_AIC(rslt)
@@ -918,7 +923,7 @@ class TestGWRBinomialParallel(unittest.TestCase):
         # code from Jing's python version, which both yield the same
         #np.testing.assert_allclose(pdev, rslt.pDev, rtol=1e-05)
 
-    def test_GS_NN_Parallel(self):
+    def test_GS_NN_Pool(self):
         est_Int = self.GS_NN.by_col(' est_Intercept')
         se_Int = self.GS_NN.by_col(' se_Intercept')
         t_Int = self.GS_NN.by_col(' t_Intercept')
@@ -944,9 +949,9 @@ class TestGWRBinomialParallel(unittest.TestCase):
         pdev = self.GS_NN.by_col(' localpdev')
 
         model = GWR(self.coords, self.y, self.X, bw=64, family=Binomial(),
-                    kernel='gaussian', fixed=False, sigma2_v1=False,n_jobs=-1)
+                    kernel='gaussian', fixed=False, sigma2_v1=False)
 
-        rslt = model.fit()
+        rslt = model.fit(pool=self.pool)
 
         AICc = get_AICc(rslt)
         AIC = get_AIC(rslt)
