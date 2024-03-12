@@ -1273,7 +1273,10 @@ class GWRResults(GLMResults):
         summary        : Optional[str]
                         optional GWR summary string if `as_str` is True
         """
-        summary = summaryModel(self) + summaryGLM(self) + summaryGWR(self)
+        summary = summaryAbout(self) + summaryModel(self) + \
+            summaryGLM(self) + summaryGWR(self) + summaryACK(self)
+
+        # summary_gui = summaryAbout(self) + summaryModel(self.results, self) + summaryGLM(self.results, self) + summaryGWR(self.results, self) + summaryACK(self)
 
         if as_str:
             return summary
@@ -2177,7 +2180,9 @@ class MGWRResults(GWRResults):
         summary        : Optional[str]
                         optional MGWR summary string if `as_str` is True
         """
-        summary = summaryModel(self) + summaryGLM(self) + summaryMGWR(self)
+        summary = summaryAbout(self) + summaryModel(self) + summaryGLM(self) + summaryMGWR(self) + summaryACK(self)
+
+        # summary_gui = summaryAbout(self) + summaryModel(self.results, self) + summaryGLM(self.results, self) + summaryMGWR(self.results, self) + summaryACK(self)
 
         if as_str:
             return summary
