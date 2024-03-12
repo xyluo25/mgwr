@@ -9,10 +9,11 @@ import numpy as np
 import unittest
 import pandas
 from types import SimpleNamespace
-from ..gwr import GWR, MGWR, MGWRResults
-from ..sel_bw import Sel_BW
-from ..diagnostics import get_AICc, get_AIC, get_BIC, get_CV
+from mgwr.gwr import GWR, MGWR, MGWRResults
+from mgwr.sel_bw import Sel_BW
+from mgwr.diagnostics import get_AICc, get_AIC, get_BIC, get_CV
 from spglm.family import Gaussian, Poisson, Binomial
+from pathlib import Path
 
 
 class TestGWRGaussianParallel(unittest.TestCase):
@@ -391,8 +392,12 @@ class TestGWRGaussianParallel(unittest.TestCase):
 
 class TestGWRPoissonParallel(unittest.TestCase):
     def setUp(self):
-        data_path = os.path.join(
-            os.path.dirname(__file__), 'tokyo/Tokyomortality.csv')
+
+        path_datasets = Path(__file__).parent.parent / 'datasets'
+        data_path = path_datasets / 'tokyo/Tokyomortality.csv'
+
+        # data_path = os.path.join(
+        #     os.path.dirname(__file__), 'tokyo/Tokyomortality.csv')
         data = io.open(data_path, mode='r')
         self.coords = list(
             zip(data.by_col('X_CENTROID'), data.by_col('Y_CENTROID')))
@@ -403,21 +408,22 @@ class TestGWRPoissonParallel(unittest.TestCase):
         POP = np.array(data.by_col('POP65')).reshape((-1, 1))
         UNEMP = np.array(data.by_col('UNEMP')).reshape((-1, 1))
         self.X = np.hstack([OCC, OWN, POP, UNEMP])
+
         self.BS_F = io.open(
             os.path.join(
-                os.path.dirname(__file__), 'tokyo/tokyo_BS_F_listwise.csv'))
+                path_datasets, 'tokyo/tokyo_BS_F_listwise.csv'))
         self.BS_NN = io.open(
             os.path.join(
-                os.path.dirname(__file__), 'tokyo/tokyo_BS_NN_listwise.csv'))
+                path_datasets, 'tokyo/tokyo_BS_NN_listwise.csv'))
         self.GS_F = io.open(
             os.path.join(
-                os.path.dirname(__file__), 'tokyo/tokyo_GS_F_listwise.csv'))
+                path_datasets, 'tokyo/tokyo_GS_F_listwise.csv'))
         self.GS_NN = io.open(
             os.path.join(
-                os.path.dirname(__file__), 'tokyo/tokyo_GS_NN_listwise.csv'))
+                path_datasets, 'tokyo/tokyo_GS_NN_listwise.csv'))
         self.BS_NN_OFF = io.open(
             os.path.join(
-                os.path.dirname(__file__),
+                path_datasets,
                 'tokyo/tokyo_BS_NN_OFF_listwise.csv'))
 
     def test_BS_F_Parallel(self):
@@ -692,8 +698,9 @@ class TestGWRPoissonParallel(unittest.TestCase):
 
 class TestGWRBinomialParallel(unittest.TestCase):
     def setUp(self):
+        path_datasets = Path(__file__).parent.parent / 'datasets'
         data_path = os.path.join(
-            os.path.dirname(__file__), 'clearwater/landslides.csv')
+            path_datasets, 'clearwater/landslides.csv')
         data = io.open(data_path)
         self.coords = list(zip(data.by_col('X'), data.by_col('Y')))
         self.y = np.array(data.by_col('Landslid')).reshape((-1, 1))
@@ -706,19 +713,19 @@ class TestGWRBinomialParallel(unittest.TestCase):
         self.X = np.hstack([ELEV, SLOPE, SIN, COS, SOUTH, DIST])
         self.BS_F = io.open(
             os.path.join(
-                os.path.dirname(__file__),
+                path_datasets,
                 'clearwater/clearwater_BS_F_listwise.csv'))
         self.BS_NN = io.open(
             os.path.join(
-                os.path.dirname(__file__),
+                path_datasets,
                 'clearwater/clearwater_BS_NN_listwise.csv'))
         self.GS_F = io.open(
             os.path.join(
-                os.path.dirname(__file__),
+                path_datasets,
                 'clearwater/clearwater_GS_F_listwise.csv'))
         self.GS_NN = io.open(
             os.path.join(
-                os.path.dirname(__file__),
+                path_datasets,
                 'clearwater/clearwater_GS_NN_listwise.csv'))
 
     def test_BS_F_Parallel(self):

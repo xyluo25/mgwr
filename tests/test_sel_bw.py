@@ -8,8 +8,9 @@ from libpysal import io
 import libpysal as ps
 import unittest
 from spglm.family import Gaussian, Poisson, Binomial
-from ..sel_bw import Sel_BW
+from mgwr.sel_bw import Sel_BW
 from numpy.testing import assert_allclose
+from pathlib import Path
 
 
 class TestSelBWGaussian(unittest.TestCase):
@@ -187,8 +188,10 @@ class TestSelBWGaussian(unittest.TestCase):
 
 class TestGWRSelBWPoisson(unittest.TestCase):
     def setUp(self):
-        data_path = os.path.join(
-            os.path.dirname(__file__), 'tokyo/Tokyomortality.csv')
+        data_path = Path(__file__).parent.parent / 'datasets/tokyo/Tokyomortality.csv'
+
+        # data_path = os.path.join(
+        #     os.path.dirname(__file__), 'tokyo/Tokyomortality.csv')
         data = io.open(data_path, mode='r')
         self.coords = list(
             zip(data.by_col('X_CENTROID'), data.by_col('Y_CENTROID')))

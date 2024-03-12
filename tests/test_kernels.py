@@ -5,7 +5,7 @@ Tests for the custom GWR kernel class
 import unittest
 import numpy as np
 import libpysal
-from ..kernels import *
+from mgwr.kernels import Kernel
 
 PEGP = libpysal.examples.get_path
 
